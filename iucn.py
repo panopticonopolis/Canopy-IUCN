@@ -3,6 +3,7 @@ import json
 import csv
 import string
 import os
+import pandas as pd
 
 #THESE FUNCTIONS ARE NOT API CALLS -------------------------------------
 
@@ -12,29 +13,26 @@ def spFiltByTaxa(rank_names):
     def spFiltByTaxon(rank, name):
         """TAKES RANK AND NAME, MAKES NEW FILTERED CSV, RETURNS LIST OF FILENAMES"""
 
-        #READ FROM ONE CSV AND WRITE TO ANOTHER WITH THE SAME HEADERS
-        target_name = 'global' + name.capitalize() + 'Assessment.csv'
-        with open('globalSpeciesAssessment.csv', 'r') as source, open(target_name, 'w') as target:
-            reader = csv.reader(source, delimiter=',')
-            writer = csv.writer(target)
-            writer.writerow(next(reader)) #copies header to target
+        #FILTER ONE CSV INTO ANOTHER WITH THE SAME HEADERS
+        filename = 'global' + name.capitalize() + 'Assessment.csv'
 
-            count = 0
-            for row in reader:
-                if row[rank] == name:
-                    writer.writerow(row)
-                    count += 1
+        df = pd.read_csv('globalSpeciesAssessment.csv')
+        df = df.loc[df[rank] == name]
+        df.to_csv(filename, index=False)
 
-            source.close()
-            target.close()
+        print('Made', filename, 'with', len(df), 'species')
 
-        print('\nMade', target_name + ' with ' + str(count) + ' species')
+        return filename
 
-        return target_name
+    #HEADER REF: ['taxonid', 'kingdom_name', 'phylum_name', 'class_name', 'order_name', 'family_name', 'genus_name', 'scientific_name', 'infra_rank', 'infra_name', 'population', 'category']
+    tax_dict = {'kingdom_name':'kingdom or kingdoms)', 'phylum_name':'phylum or phyla', 'class_name':'class or classes', 'order_name':'order or orders', 'family_name':'family or families', 'genus_name':'genus or genuses'}
 
-    #REF: ['taxonid', 'kingdom_name', 'phylum_name', 'class_name', 'order_name', 'family_name', 'genus_name', 'scientific_name', 'infra_rank', 'infra_name', 'population', 'category']
+    rank = 'class_name'
 
-    rank = 3
+    print()
+    print('Finding all species in', tax_dict[rank], ' '.join(rank_names))
+    
+    print()
     files_spFiltByTaxa = []
     for name in rank_names:
         files_spFiltByTaxa.append(spFiltByTaxon(rank, name))
@@ -48,63 +46,82 @@ def getTaxaInCountries():
     """TAKES ALL SPECIES IN COUNTRY AND ALL SPECIES IN A TAXON AND RETURNS COMMON MEMBERS
        EITHER ENTITY CAN BE A SINGLETON OR A LIST"""
 
-    def getTaxonInCountries(files_allSpByCountry, files_spFiltByTax, rank):
-        """TAKES LIST OF CSVs OF ALL SPECIES IN COUNTRY AND GLOBAL CSV OF A RANK, MAKES CSV OF COMMON MEMBERS BY 'taxonid' RETURNS LIST OF FILES"""
-        files_made = []
+    def getTaxonInCountry(c, t, rank):
+        """TAKES CSV OF ALL SPECIES IN COUNTRY AND GLOBAL CSV OF A RANK, MAKES CSV OF COMMON MEMBERS BY 'taxonid' RETURNS LIST OF FILES"""
+        
+        filename = c[:3] + rank.capitalize() + c[3:5]
+        print('...Finding all', rank.lower(), 'in ' + c[3:5])
+        
+        #USE SHARED COLUMN 'taxonid' TO FIND ALL ROWS IN COMMON BETWEEN TWO CSVS
+        df_spByCountry = pd.read_csv(c)
+        df_spByTax = pd.read_csv(t)
 
-        for file in files_allSpByCountry:
+        df = pd.merge(df_spByCountry, df_spByTax, on='taxonid', how='inner')
+        df = df.iloc[:, :7]
+        df = df.rename(columns = {'scientific_name_x':'scientific_name'})
+        df = df.rename(columns = {'category_x':'category'})
 
-            with open(file, 'r') as c, open(files_spFiltByTax, 'r') as s:
-                filename = file[:3] + rank.capitalize() + file[3:5]
-                files_made.append(filename)
-                print('...Finding all', rank.lower(), 'in ' + file[3:5])
+        df.to_csv(filename + '.csv', index=False)
+        
+        print('Made', filename + '.csv with ' + str(len(df)) + ' species\n')
+        
+        return filename
 
-                with open(filename + '.csv', 'w') as target:
-                    country = csv.reader(c, delimiter=',')
-                    species = csv.reader(s, delimiter=',')
-                    writer = csv.writer(target)
-                    writer.writerow(next(country)) # write header row from country to target
-                    
-                    country_list = [row for row in country]
-                    species_list = [row for row in species]
-
-                    count = 0
-                    for sp in species_list:
-                        for cn in country_list:
-                            #sp[0] == cn[0] is correct but uses 'taxonid'
-                            #sp[7] == cn[1] creates 'dupes' because subpops are ignored
-                            if sp[0] == cn[0]:
-                                writer.writerow(cn)
-                                count += 1
-
-                    print('Made', filename + '.csv with ' + str(count) + ' species\n')
-                
-                    c.close()
-                    s.close()
-                    target.close()
-
-        return files_made
 
     #ASSUMES ALL SPECIES BY COUNTRY CSV EXISTS IN LOCAL DIR
     files_in_dir = os.listdir()
-    files_allSpByCountry = [f for f in files_in_dir if f[:3] == 'all' and f[5:] == 'species.csv']
+    files_spByCountry = [f for f in files_in_dir if f[:3] == 'all' and f[5:] == 'species.csv']
 
     #ASSUMES ALL SPECIES FILTERED BY TAXONOMY RANK CSV EXISTS IN LOCAL DIR
-    files_spFiltByTaxon = [f for f in files_in_dir if f[:6] == 'global' and f[6:13] != 'Species']
-
-    files_getTaxonInCountries = []
-    for f in files_spFiltByTaxon:
-        files_getTaxonInCountries.extend(getTaxonInCountries(files_allSpByCountry, f, f[6:-14]))
+    files_spByTaxon = [f for f in files_in_dir if f[:6] == 'global' and f[6:13] != 'Species']
     
+    files_getTaxonInCountries = []
+    for t in files_spByTaxon:
+        for c in files_spByCountry:
+            files_getTaxonInCountries.append(getTaxonInCountry(c, t, t[6:-14]))
+
     print('\nFiles in dir for species filtered by taxonomy:')
     for f in files_getTaxonInCountries:
         print(' - ', f)
 
 
+def spFiltByHabsInCountries(hab_list, hab_name):
+    """TAKES LIST OF COUNTRIES AND FILTERS ALL SPECIES THAT EXIST IN GIVEN SUBHABITATS"""
+
+    def spFiltByHabsInCountry(country, hab_name):
+        """TAKES SINGLETON ALL SP IN COUNTRY CSV, HABITAT NAME STRING
+           MAKES NEW CSV BASED ON FILTERED RESULT"""
+
+        df = pd.read_csv(f)
+
+        df = df.drop(df.columns[[3, 4, 5, 6, 7]], axis=1)
+        df = df.drop(df.columns[8:], axis=1)
+
+        df = df.dropna(thresh=4)
+        filename = 'all' + hab_name + country[-6:-4] + 'species.csv'
+
+        df.to_csv(filename, index=False)
+
+        print('Made', filename, 'with', len(df), 'species')
+
+        return filename
+
+    files_in_dir = os.listdir()
+    files_allSpeciesHabitatsByCountry = [f for f in files_in_dir if ('allSpeciesHabitats' in f) and ('.csv' in f)]
+    
+    result = []
+    for f in files_allSpeciesHabitatsByCountry:
+        result.append(spFiltByHabsInCountry(f, hab_name))
+
+    print('\nfiles in dir for species in country by', hab_name, 'habitat:')
+    for r in result:
+        print(' - ', r)
+
+
 #THESE FUNCTIONS ARE API CALLS -----------------------------------------
 
 def compileSpHabByCountries(STEM, TOKEN, hab_list):
-    """MAKES HABITATS CSV FROM LIST OF 'allSpByCountries()' CSVs FOR ALL HABITATS
+    """MAKES HABITATS TXT, CSV FROM LIST OF 'allSpByCountries()' CSVs FOR ALL HABITATS
     ASSUMES ALL SPECIES BY COUNTRY CSV EXISTS IN LOCAL DIR"""
 
     def compileSpHabByCountry(hab_list, list_species, country_code):
@@ -127,8 +144,6 @@ def compileSpHabByCountries(STEM, TOKEN, hab_list):
                     if s['habitat'] in h:
                         in_habitat = {'suitability': s['suitability'], 'season': s['season'], 'majorimportance': s['majorimportance']}
                         habitat_row.update({h:in_habitat})
-                    else:
-                        habitat_row.update({h:None})
 
             habitat_row.update(row_labels)
 
@@ -158,45 +173,9 @@ def compileSpHabByCountries(STEM, TOKEN, hab_list):
                 list_species.append(species_API_call)
                 count += 1
 
+        writeTXTFile('allSpeciesHabitats' + name[3:5], list_species)
+
         compileSpHabByCountry(hab_list, list_species, name[3:5])
-
-
-def spFiltByHabsInCountries(hab_list):
-    """TAKES LIST OF COUNTRIES AND FILTERS ALL SPECIES THAT EXIST IN GIVEN SUBHABITATS"""
-
-    def spFiltByHabsInCountry(country, target_hab, hab_name):
-        """TAKES SINGLETON ALL SP IN COUNTRY CSV, LIST OF TARGET HABITATS, HABITAT NAME STRING
-           MAKES NEW CSV BASED ON FILTERED RESULT"""
-        filename = 'all' + hab_name + country[-6:-4] + 'species.csv'
-        with open(country, 'r', newline='') as f, open(filename, 'w', newline='') as g:
-            reader = csv.reader(f)
-            writer = csv.writer(g)
-            writer.writerow(target_hab)
-            next(reader)
-            count = 1
-            for row in reader:
-              for r in row[8:13]:
-                  if r:
-                        good_row = row[:3] + row[8:13]
-                        writer.writerow(good_row)
-                        count += 1
-            print('Made', filename, 'with', count, 'species')
-            f.close()
-            g.close()
-
-    #CURRENTLY ONLY FORESTS ARE OF INTEREST SO I WON'T ABSTRACT ANY FURTHER
-    FORESTS = hab_list[:3] + hab_list[8:13] #['1.5', '1.6', '1.7', '1.8', '1.9']
-    WETLANDS = hab_list[:3] + hab_list[34:43] + hab_list[46:51] #['5.1', '5.2', '5.3', '5.4', '5.5', '5.6', '5.7', '5.8', '5.9', '5.13', '5.14', '5.15', '5.16', '5.17']
-    DEGRADED = hab_list[:3] + hab_list[101:102] #['14.6']
-
-    target_hab = FORESTS
-    hab_name = 'Forests'
-
-    files_in_dir = os.listdir()
-    files_allSpeciesHabitatsByCountry = [f for f in files_in_dir if 'allSpeciesHabitats' in f]
-
-    for f in files_allSpeciesHabitatsByCountry:
-        spFiltByHabsInCountry(f, target_hab, hab_name)
 
 
 def allSpByCountries(STEM, TOKEN, COUNTRIES):
@@ -297,6 +276,7 @@ def main():
     #THESE ARE CONSTANTS
     STEM = 'https://apiv3.iucnredlist.org/api/v3/'
 
+    #SEE https://apiv3.iucnredlist.org/api/v3/docs FOR API TOKEN
     with open('token.txt', 'r') as t:
         TOKEN = t.read()
         t.close()
@@ -304,6 +284,7 @@ def main():
     COUNTRIES = ['CD', 'CG', 'GA', 'CM']
     rank_names = ['MAMMALIA', 'AVES', 'REPTILIA', 'AMPHIBIA']
     hab_list = ['scientific_name', 'taxonid', 'country', '1 - Forest', '1.1 - Forest - Boreal', '1.2 - Forest - Subarctic', '1.3 - Forest - Subantarctic', '1.4 - Forest - Temperate', '1.5 - Forest - Subtropical/Tropical Dry', '1.6 - Forest - Subtropical/Tropical Moist Lowland', '1.7 - Forest - Subtropical/Tropical Mangrove Vegetation Above High Tide Level', '1.8 - Forest - Subtropical/Tropical Swamp', '1.9 - Forest - Subtropical/Tropical Moist Montane', '2 - Savanna', '2.1 - Savanna - Dry', '2.2 - Savanna - Moist', '3 - Shrubland', '3.1 - Shrubland - Subarctic', '3.2 - Shrubland - Subantarctic', '3.3 - Shrubland - Boreal', '3.4 - Shrubland - Temperate', '3.5 - Shrubland - Subtropical/Tropical Dry', '3.6 - Shrubland - Subtropical/Tropical Moist', '3.7 - Shrubland - Subtropical/Tropical High Altitude', '3.8 - Shrubland - Mediterranean-type Shrubby Vegetation', '4 - Grassland', '4.1 - Grassland - Tundra', '4.2 - Grassland - Subarctic', '4.3 - Grassland - Subantarctic', '4.4 - Grassland - Temperate', '4.5 - Grassland - Subtropical/Tropical Dry', '4.6 - Grassland - Subtropical/Tropical Seasonally Wet/Flooded', '4.7 - Grassland - Subtropical/Tropical High Altitude', '5 - Wetlands (inland)', '5.1 - Wetlands (inland) - Permanent Rivers/Streams/Creeks (includes waterfalls)', '5.2 - Wetlands (inland) - Seasonal/Intermittent/Irregular Rivers/Streams/Creeks', '5.3 - Wetlands (inland) - Shrub Dominated Wetlands', '5.4 - Wetlands (inland) - Bogs, Marshes, Swamps, Fens, Peatlands', '5.5 - Wetlands (inland) - Permanent Freshwater Lakes (over 8ha)', '5.6 - Wetlands (inland) - Seasonal/Intermittent Freshwater Lakes (over 8ha)', '5.7 - Wetlands (inland) - Permanent Freshwater Marshes/Pools (under 8ha)', '5.8 - Wetlands (inland) - Seasonal/Intermittent Freshwater Marshes/Pools (under 8ha)', '5.9 - Wetlands (inland) - Freshwater Springs and Oases', '5.1 - Wetlands (inland) - Tundra Wetlands (incl. pools and temporary waters from snowmelt)', '5.11 - Wetlands (inland) - Alpine Wetlands (includes temporary waters from snowmelt)', '5.12 - Wetlands (inland) - Geothermal Wetlands', '5.13 - Wetlands (inland) - Permanent Inland Deltas', '5.14 - Wetlands (inland) - Permanent Saline, Brackish or Alkaline Lakes', '5.15 - Wetlands (inland) - Seasonal/Intermittent Saline, Brackish or Alkaline Lakes and Flats', '5.16 - Wetlands (inland) - Permanent Saline, Brackish or Alkaline Marshes/Pools', '5.17 - Wetlands (inland) - Seasonal/Intermittent Saline, Brackish or Alkaline Marshes/Pools', '5.18 - Wetlands (inland) - Karst and Other Subterranean Hydrological Systems (inland)', '6 - Rocky areas (eg. inland cliffs, mountain peaks)', '7 - Caves and Subterranean Habitats (non-aquatic)', '7.1 - Caves and Subterranean Habitats (non-aquatic) - Caves', '7.2 - Caves and Subterranean Habitats (non-aquatic) - Other Subterranean Habitats', '8 - Desert', '8.1 - Desert - Hot', '8.2 - Desert - Temperate', '8.3 - Desert - Cold', '9 - Marine Neritic', '9.1 - Marine Neritic - Pelagic', '9.2 - Marine Neritic - Subtidal Rock and Rocky Reefs', '9.3 - Marine Neritic - Subtidal Loose Rock/pebble/gravel', '9.4 - Marine Neritic - Subtidal Sandy', '9.5 - Marine Neritic - Subtidal Sandy-Mud', '9.6 - Marine Neritic - Subtidal Muddy', '9.7 - Marine Neritic - Macroalgal/Kelp', '9.8 - Marine Neritic - Coral Reef', '9.9 - Marine Neritic - Seagrass (Submerged)', '9.1 - Marine Neritic - Estuaries', '10 - Marine Oceanic', '10.1 - Marine Oceanic - Epipelagic (0-200m)', '10.2 - Marine Oceanic - Mesopelagic (200-1000m)', '10.3 - Marine Oceanic - Bathypelagic (1000-4000m)', '10.4 - Marine Oceanic - Abyssopelagic (4000-6000m)', '11 - Marine Deep Benthic', '11.1 - Marine Deep Benthic - Continental Slope/Bathyl Zone (200-4,000m)', '11.2 - Marine Deep Benthic - Abyssal Plain (4,000-6,000m)', '11.3 - Marine Deep Benthic - Abyssal Mountain/Hills (4,000-6,000m) 11.4 Marine Deep Benthic - Hadal/Deep Sea Trench (>6,000m)', '11.5 - Marine Deep Benthic - Seamount', '11.6 - Marine Deep Benthic - Deep Sea Vents (Rifts/Seeps)', '12 - Marine Intertidal', '12.1 - Marine Intertidal - Rocky Shoreline', '12.2 - Marine Intertidal - Sandy Shoreline and/or Beaches, Sand Bars, Spits, Etc', '12.3 - Marine Intertidal - Shingle and/or Pebble Shoreline and/or Beaches', '12.4 - Marine Intertidal - Mud Flats and Salt Flats', '12.5 - Marine Intertidal - Salt Marshes (Emergent Grasses)', '12.6 - Marine Intertidal - Tidepools', '12.7 - Marine Intertidal - Mangrove Submerged Roots', '13 - Marine Coastal/Supratidal', '13.1 - Marine Coastal/Supratidal - Sea Cliffs and Rocky Offshore Islands', '13.2 - Marine Coastal/supratidal - Coastal Caves/Karst', '13.3 - Marine Coastal/Supratidal - Coastal Sand Dunes', '13.4 - Marine Coastal/Supratidal - Coastal Brackish/Saline Lagoons/Marine Lakes', '13.5 - Marine Coastal/Supratidal - Coastal Freshwater Lakes', '14 - Artificial/Terrestrial', '14.1 - Artificial/Terrestrial - Arable Land', '14.2 - Artificial/Terrestrial - Pastureland', '14.3 - Artificial/Terrestrial - Plantations', '14.4 - Artificial/Terrestrial - Rural Gardens', '14.5 - Artificial/Terrestrial - Urban Areas', '14.6 - Artificial/Terrestrial - Subtropical/Tropical Heavily Degraded Former Forest', '15 - Artificial/Aquatic & Marine', '15.1 - Artificial/Aquatic - Water Storage Areas (over 8ha)', '15.2 - Artificial/Aquatic - Ponds (below 8ha)', '15.3 - Artificial/Aquatic - Aquaculture Ponds', '15.4 - Artificial/Aquatic - Salt Exploitation Sites', '15.5 - Artificial/Aquatic - Excavations (open)', '15.6 - Artificial/Aquatic - Wastewater Treatment Areas', '15.7 - Artificial/Aquatic - Irrigated Land (includes irrigation channels)', '15.8 - Artificial/Aquatic - Seasonally Flooded Agricultural Land', '15.9 - Artificial/Aquatic - Canals and Drainage Channels, Ditches', '15.1 - Artificial/Aquatic - Karst and Other Subterranean Hydrological Systems (human-made)', '15.11 - Artificial/Marine - Marine Anthropogenic Structures', '15.12 - Artificial/Marine - Mariculture Cages', '15.13 - Artificial/Marine - Mari/Brackishculture Ponds', '16 - Introduced vegetation', '17 - Other', '18 - Unknown']
+    hab_name = 'Forests'
 
     #API CALLS------------------------------
     
@@ -313,7 +294,8 @@ def main():
     #GETS ALL SPECIES FOR A LIST OF COUNTRIES
     # allSpByCountries(STEM, TOKEN, COUNTRIES)
     
-    #MAKES HABITATS CSV FROM LIST OF 'allSpByCountries()' CSVs
+    #MAKES HABITATS TXT, CSV FROM LIST OF 'allSpByCountries()' CSVs
+    #RUN THIS ONLY IF SOURCE FILES DON'T EXIST/NEED TO BE RECOMPILED
     # compileSpHabByCountries(STEM, TOKEN, hab_list)
 
     #NOT API CALLS--------------------------
@@ -323,10 +305,10 @@ def main():
 
     #TAKES ALL SPECIES IN COUNTRY AND ALL SPECIES IN A TAXON AND RETURNS COMMON MEMBERS
     #EITHER ENTITY CAN BE A SINGLETON OR A LIST
-    # getTaxaInCountries()
+    getTaxaInCountries()
 
     #TAKES EXISTING LIST OF COUNTRIES AND FILTERS ALL SPECIES THAT EXIST IN GIVEN SUBHABITATS
-    # spFiltByHabsInCountries(hab_list)
-
+    #CURRENTLY SET TO FORESTS
+    spFiltByHabsInCountries(hab_list, hab_name)
 
 main()
